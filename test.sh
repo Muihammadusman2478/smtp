@@ -5,6 +5,11 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# If sourced, "exit" would kill the SSH session.
+# Use fail()/ok() helpers to safely stop without closing the connection.
+fail() { echo -e "${YELLOW}❌ $1${NC}"; return 1 2>/dev/null || exit 1; }
+ok()   { echo -e "${GREEN}✔ $1${NC}"; }
+
 echo "======================================"
 echo "POSTFIX CONFIGURATION"
 echo "======================================"
@@ -12,17 +17,20 @@ cat /etc/postfix/main.cf
 echo ""
 
 BASE_DIR="/home/master/applications"
-cd "$BASE_DIR" || exit 1
+cd "$BASE_DIR" || fail "Applications directory not found: $BASE_DIR"
 
 read -p "Enter the domain: " DOMAIN
 echo ""
 
 echo "Searching for '$DOMAIN' in conf files..."
+
 APP_MATCH=$(grep -rni "$DOMAIN" */conf/* 2>/dev/null | head -n1 | cut -d'/' -f1)
 
 if [ -z "$APP_MATCH" ]; then
-  echo "No matching application found."
-  exit 1
+  echo -e "${YELLOW}❌ No matching application found for domain: ${DOMAIN}${NC}"
+  echo -e "${CYAN}Tip:${NC} Try searching with www.${DOMAIN} or check domain mapping in app conf."
+  # Do NOT exit (would close SSH when sourced). Just return safely.
+  return 0 2>/dev/null || exit 0
 fi
 
 echo -e "${CYAN}Application identified:${NC} $APP_MATCH"
@@ -30,7 +38,10 @@ echo -e "${CYAN}Application identified:${NC} $APP_MATCH"
 APP_DIR="$BASE_DIR/$APP_MATCH"
 NGINX_CONF="/etc/nginx/sites-enabled/$APP_MATCH"
 
+[ -f "$NGINX_CONF" ] || fail "Nginx config not found: $NGINX_CONF"
+
 WEBROOT=$(grep -i "root" "$NGINX_CONF" | head -n1 | awk '{print $2}' | tr -d ';')
+[ -n "$WEBROOT" ] || fail "Webroot not detected from nginx config ($NGINX_CONF)."
 
 echo ""
 echo "======================================"
@@ -38,7 +49,7 @@ echo -e "${GREEN}✔ Webroot detected:${NC}"
 echo -e "${GREEN}$WEBROOT${NC}"
 echo "======================================"
 
-cd "$WEBROOT" || exit 1
+cd "$WEBROOT" || fail "Unable to access webroot: $WEBROOT"
 
 # WordPress Detection (based on Cloudways WP system domain pattern)
 IS_WORDPRESS=0
@@ -47,7 +58,7 @@ if grep -r "wordpress-[0-9]*-[0-9]*\.cloudwaysapps\.com" "$APP_DIR/conf/" >/dev/
 fi
 
 if [ "$IS_WORDPRESS" -eq 1 ]; then
-  echo -e "${GREEN}✔ WordPress application detected.${NC}"
+  ok "WordPress application detected."
 else
   echo "Non-WordPress application detected."
 fi
@@ -59,8 +70,9 @@ if [ "$IS_WORDPRESS" -eq 1 ]; then
     echo "Checking for wp-mail-smtp plugin..."
 
     PLUGIN_OUTPUT=$(wp --allow-root --skip-plugins --skip-themes --skip-packages plugin list | grep -i "wp-mail-smtp")
+
     if [ -n "$PLUGIN_OUTPUT" ]; then
-      echo -e "${GREEN}✔ wp-mail-smtp plugin found:${NC}"
+      ok "wp-mail-smtp plugin found:"
       echo -e "${GREEN}$PLUGIN_OUTPUT${NC}"
     else
       echo -e "${YELLOW}wp-mail-smtp plugin not found.${NC}"
@@ -68,12 +80,16 @@ if [ "$IS_WORDPRESS" -eq 1 ]; then
 
     echo ""
     echo "Fetching wp_mail_smtp option..."
-    SMTP_OPTION=$(wp --allow-root option get wp_mail_smtp)
+    SMTP_OPTION=$(wp --allow-root option get wp_mail_smtp 2>/dev/null)
 
     if [ -n "$SMTP_OPTION" ]; then
-      echo -e "${GREEN}✔ wp_mail_smtp configuration:${NC}"
+      ok "wp_mail_smtp configuration:"
       echo -e "${GREEN}$SMTP_OPTION${NC}"
+    else
+      echo -e "${YELLOW}(No wp_mail_smtp option found or WP-CLI couldn't read it.)${NC}"
     fi
+  else
+    echo -e "${YELLOW}WP CLI not found.${NC}"
   fi
 fi
 
@@ -85,7 +101,6 @@ echo ""
 # Shared email content (same for both)
 EMAIL_SUBJECT="Email Functionality Validation from Your Cloudways Server"
 
-# Plain-text body (Cloudways-style) + small marker line to differentiate mail vs wp_mail
 EMAIL_BODY_COMMON=$(cat <<'EOT'
 Dear Customer,
 
@@ -134,7 +149,7 @@ echo "Test email sent using mail()";
 ?>
 EOF
 
-echo -e "${GREEN}✔ mail() test script created${NC}"
+ok "mail() test script created"
 
 # Create wp_mail() script if WordPress
 if [ "$IS_WORDPRESS" -eq 1 ]; then
@@ -166,7 +181,7 @@ echo "Test email sent using wp_mail()";
 ?>
 EOF
 
-  echo -e "${GREEN}✔ wp_mail() test script created${NC}"
+  ok "wp_mail() test script created"
 fi
 
 # Print both files
@@ -181,11 +196,11 @@ if [ "$IS_WORDPRESS" -eq 1 ]; then
   echo "======================================"
   echo -e "${CYAN}Generated wp-mail-test.php:${NC}"
   echo "======================================"
-  cat "$WP_MAIL_FILE"
+cat "$WP_MAIL_FILE"
 fi
 
 echo ""
-echo -e "${GREEN}✔ Script completed successfully.${NC}"
+ok "Script completed successfully."
 
 # DNS Check
 echo ""
@@ -208,7 +223,7 @@ echo ""
 echo -e "${CYAN}DMARC Record:${NC}"
 dig +short TXT "_dmarc.$DOMAIN"
 
-# Final Directory Change (note: persists only when run via source)
-cd "$WEBROOT" || exit 1
+# Final Directory Change (persists when run via source)
+cd "$WEBROOT" || fail "Could not cd into webroot at the end: $WEBROOT"
 echo ""
-echo -e "${GREEN}✔ Final directory:${NC} $(pwd)"
+ok "Final directory: $(pwd)"
