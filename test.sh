@@ -36,7 +36,6 @@ APP_MATCH=$(grep -rni "$DOMAIN" */conf/* 2>/dev/null | head -n1 | cut -d'/' -f1)
 
 if [ -z "$APP_MATCH" ]; then
   echo -e "${YELLOW}❌ No matching application found for domain: ${DOMAIN}${NC}"
-  echo -e "${CYAN}Tips:${NC} Try searching with www.${DOMAIN} or confirm domain is mapped in app conf."
   return 0 2>/dev/null
 fi
 
